@@ -4,10 +4,9 @@ import os
 import re
 import shutil
 
-
 class Path:
 
-  __slots__ = ('_path',)
+  __slots__ = ('_path', 'SEP')
 
   filesystems = []
 
@@ -31,9 +30,10 @@ class Path:
     path = re.sub(r'(?<=[^/])/$', '', path)  # Remove single trailing slash.
     path = path or '.'  # Empty path is represented by a dot.
     self._path = path
+    self.SEP = '\\' if os.name == 'nt' else '/'
 
   def __truediv__(self, part):
-    sep = '' if self._path.endswith('/') else '/'
+    sep = '' if self._path.endswith(self.SEP) else self.SEP
     return type(self)(f'{self._path}{sep}{str(part)}')
 
   def __repr__(self):
@@ -53,17 +53,17 @@ class Path:
 
   @property
   def parent(self):
-    if '/' not in self._path:
+    if self.SEP not in self._path:
       return type(self)('.')
-    parent = self._path.rsplit('/', 1)[0]
-    parent = parent or ('/' if self._path.startswith('/') else '.')
+    parent = self._path.rsplit(self.SEP, 1)[0]
+    parent = parent or (self.SEP if self._path.startswith(self.SEP) else '.')
     return type(self)(parent)
 
   @property
   def name(self):
-    if '/' not in self._path:
+    if self.SEP not in self._path:
       return self._path
-    return self._path.rsplit('/', 1)[1]
+    return self._path.rsplit(self.SEP, 1)[1]
 
   @property
   def stem(self):
@@ -121,7 +121,7 @@ class Path:
 
 class LocalPath(Path):
 
-  __slots__ = ('_path',)
+  __slots__ = ('_path', "SEP")
 
   def __init__(self, path):
     super().__init__(os.path.expanduser(str(path)))
@@ -168,7 +168,7 @@ class LocalPath(Path):
 
 class GFilePath(Path):
 
-  __slots__ = ('_path',)
+  __slots__ = ('_path', "SEP")
 
   gfile = None
 
