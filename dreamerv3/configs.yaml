@@ -95,7 +95,7 @@ defaults:
   replay_length_eval: 0
   replay_context: 1
   random_agent: False
-  loss_scales: {dec_cnn: 1.0, dec_mlp: 1.0, reward: 1.0, cont: 1.0, dyn: 1.0, rep: 0.1, actor: 1.0, critic: 1.0, replay_critic: 0.3}
+  loss_scales: {dec_cnn: 1.0, dec_mlp: 1.0, reward: 1.0, cont: 1.0, dyn: 1.0, rep: 0.1, actor: 1.0, critic: 1.0, replay_critic: 0.3, concept: 0.5}
   opt: {scaler: rms, lr: 4e-5, eps: 1e-20, momentum: True, wd: 0.0, warmup: 1000, globclip: 0.0, agc: 0.3, beta1: 0.9, beta2: 0.999, details: False, pmin: 1e-3, anneal: 0, schedule: constant}
   separate_lrs: False
   lrs: {dec: 1e-4, enc: 1e-4, dyn: 1e-4, rew: 1e-4, con: 1e-4, actor: 3e-5, critic: 3e-5}
@@ -118,15 +118,24 @@ defaults:
   dec:
     spaces: '.*'
     typ: simple
-    simple: {inputs: [deter, stoch], vecdist: symlog_mse, depth: 64, mults: [1, 2, 3, 4, 4], layers: 3, units: 1024, act: silu, norm: rms, outscale: 1.0, winit: normal, outer: True, kernel: 5, minres: 4, block_space: 8, block_fans: False, block_norm: False, hidden_stoch: True, space_hidden: 0}
-  rewhead: {layers: 1, units: 1024, act: silu, norm: rms, dist: symexp_twohot, outscale: 0.0, inputs: [deter, stoch], winit: normal, bins: 255, block_fans: False, block_norm: False}
-  conhead: {layers: 1, units: 1024, act: silu, norm: rms, dist: binary, outscale: 1.0, inputs: [deter, stoch], winit: normal, block_fans: False, block_norm: False}
+    simple: {inputs: [tensor], vecdist: symlog_mse, depth: 64, mults: [1, 2, 3, 4, 4], layers: 3, units: 1024, act: silu, norm: rms, outscale: 1.0, winit: normal, outer: True, kernel: 5, minres: 4, block_space: 8, block_fans: False, block_norm: False, hidden_stoch: True, space_hidden: 8}
+  cem:
+    typ: simple
+    simple: {layers: 1, units: 1024, norm: none, inputs: [deter, stoch], winit: normal, block_fans: False, block_norm: False}
+    cpt: {
+      emb_units: 16,
+      typ: [bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin],
+      res_units: 16,
+    }
+  
+  rewhead: {layers: 1, units: 1024, act: silu, norm: rms, dist: symexp_twohot, outscale: 0.0, inputs: [tensor], winit: normal, bins: 255, block_fans: False, block_norm: False}
+  conhead: {layers: 1, units: 1024, act: silu, norm: rms, dist: binary, outscale: 1.0, inputs: [tensor], winit: normal, block_fans: False, block_norm: False}
   contdisc: True
   rssm_loss: {free: 1.0}
 
   # Actor Critic
-  actor: {layers: 3, units: 1024, act: silu, norm: rms, minstd: 0.1, maxstd: 1.0, outscale: 0.01, unimix: 0.01, inputs: [deter, stoch], winit: normal, block_fans: False, block_norm: False}
-  critic: {layers: 3, units: 1024, act: silu, norm: rms, dist: symexp_twohot, outscale: 0.0, inputs: [deter, stoch], winit: normal, bins: 255, block_fans: False, block_norm: False}
+  actor: {layers: 3, units: 1024, act: silu, norm: rms, minstd: 0.1, maxstd: 1.0, outscale: 0.01, unimix: 0.01, inputs: [tensor], winit: normal, block_fans: False, block_norm: False}
+  critic: {layers: 3, units: 1024, act: silu, norm: rms, dist: symexp_twohot, outscale: 0.0, inputs: [tensor], winit: normal, bins: 255, block_fans: False, block_norm: False}
   actor_dist_disc: onehot
   actor_dist_cont: normal
   imag_start: all

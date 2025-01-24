@@ -817,6 +817,67 @@ class Input:
           f'Requested keys: {self.keys}')
     return xs
 
+class EmbeddingGenerator(nj.Module):
+
+  winit: str = 'normal'
+  binit: bool = False
+  fan: str = 'in'
+  dtype: str = 'default'
+  outscale: float = 1.0
+  bias : bool = True
+
+  def __init__(self, **kw):
+    self.ckw = {k: v for k, v in kw['cpt'].items()}
+    linonly = ('units', 'norm', 'winit')
+    self.lkw = {k: v for k, v in kw['simple'].items() if k in linonly}
+    self.n_concepts = len(self.ckw['typ'])
+    self.inputs = Input(kw['simple']['inputs'], featdims=1)
+    self.emb_units = self.ckw['emb_units']
+    self.inter_emb_units = self.n_concepts * self.emb_units * 2
+    self.res_units = self.ckw['res_units']
+    self.overrides = {
+      'emb_enc': {'units': self.inter_emb_units},
+      'emb_dec': {'units': kw['simple']['units']}
+    }
+
+    # CEM concept predictor
+    self._winit = Initializer(
+      self.winit, self.outscale, self.fan, self.dtype
+    )
+    self._binit = Initializer('zeros', 1.0, self.fan, self.dtype)
+  
+  def __call__(self, inputs, bdims=2, training=False):
+    feat = self.inputs(inputs, bdims, jaxutils.COMPUTE_DTYPE)
+    x = feat.reshape([-1, feat.shape[-1]])
+    x = self.get('h0', Linear, **(self.lkw | self.overrides['emb_enc']))(x)
+    x = x.reshape([-1, self.n_concepts, self.emb_units * 2])
+    scores = self._cem_concepts(jax.nn.silu(x))
+    x = x.reshape([-1, self.n_concepts, 2, self.emb_units])
+
+    scores = jax.nn.sigmoid(scores)
+
+    x = x[:, :, 0, :] * scores + x[:, :, 1, :] * (1. - scores)
+    x = x.reshape([-1, self.n_concepts * self.emb_units])
+    x = self.get('h1', Linear, **(self.lkw | self.overrides['emb_dec']))(x)
+    x = x.reshape([*feat.shape[:bdims], -1])
+    scores = scores.reshape([*feat.shape[:bdims], -1])
+    
+    return x, scores
+
+  def _cem_concepts(self, x):
+    fan_shape = (self.emb_units * 2, 1) if self.fan == 'in' else None
+    shape = (self.n_concepts, self.emb_units * 2, 1)
+    kernel = self.get('kernel', self._winit, shape, fan_shape).astype(x.dtype)
+    x = jnp.einsum('bce,cej->bcj', x, kernel)
+
+    if self.bias:
+      if self.binit:
+        raise NotImplementedError()
+      else:
+        args = (self._binit, (self.n_concepts, 1))
+      x += self.get('bias', *args).astype(x.dtype)
+    assert x.dtype == jaxutils.COMPUTE_DTYPE, (x.dtype, x.shape)
+    return x
 
 class Initializer:
 

@@ -4,6 +4,7 @@ from functools import partial as bind
 import dreamerv3
 import embodied
 
+warnings.filterwarnings('ignore', category=DeprecationWarning)
 warnings.filterwarnings('ignore', '.*truncated to dtype int32.*')
 
 
@@ -32,8 +33,8 @@ def main():
     logdir = embodied.Path(config.logdir)
     return embodied.Logger(embodied.Counter(), [
         embodied.logger.TerminalOutput(config.filter),
-        embodied.logger.JSONLOutput(logdir, 'metrics.jsonl'),
-        embodied.logger.TensorBoardOutput(logdir),
+        # embodied.logger.JSONLOutput(logdir, 'metrics.jsonl'),
+        # embodied.logger.TensorBoardOutput(logdir),
         # embodied.logger.WandbOutput(logdir.name, config=config),
     ])
 

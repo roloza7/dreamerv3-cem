@@ -10,6 +10,7 @@ sys.path.insert(0, str(directory.parent))
 sys.path.insert(0, str(directory.parent.parent))
 __package__ = directory.name
 
+warnings.filterwarnings('ignore', r'.*is Deprecated\. Please use tf\..*') # Tensorflow deprecatino warning
 warnings.filterwarnings('ignore', '.*box bound precision lowered.*')
 warnings.filterwarnings('ignore', '.*using stateful random seeds*')
 warnings.filterwarnings('ignore', '.*is a deprecated alias for.*')

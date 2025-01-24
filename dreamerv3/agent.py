@@ -24,6 +24,8 @@ sample = lambda dist: {
 @jaxagent.Wrapper
 class Agent(nj.Module):
 
+  print("EMBODIED PATH:", embodied.Path(__file__).parent / '../configs.yaml')
+
   configs = yaml.YAML(typ='safe').load(
       (embodied.Path(__file__).parent / 'configs.yaml').read())
 
@@ -57,6 +59,9 @@ class Agent(nj.Module):
     self.rew = nets.MLP((), **config.rewhead, name='rew')
     self.con = nets.MLP((), **config.conhead, name='con')
 
+    # Concept Embedding
+    self.cem = nets.EmbeddingGenerator(**config.cem, name='cem')
+
     # Actor
     kwargs = {}
     kwargs['shape'] = {
@@ -88,7 +93,7 @@ class Agent(nj.Module):
     self.opt = jaxutils.Optimizer(lr, **kw, name='opt')
     self.modules = [
         self.enc, self.dyn, self.dec, self.rew, self.con,
-        self.actor, self.critic]
+        self.actor, self.critic, self.cem]
     scales = self.config.loss_scales.copy()
     cnn = scales.pop('dec_cnn')
     mlp = scales.pop('dec_mlp')
@@ -98,7 +103,7 @@ class Agent(nj.Module):
 
   @property
   def policy_keys(self):
-    return '/(enc|dyn|actor)/'
+    return '/(enc|dyn|actor|cem)/'
 
   @property
   def aux_spaces(self):
@@ -135,7 +140,16 @@ class Agent(nj.Module):
     prevact = jaxutils.onehot_dict(prevact, self.act_space)
     lat, out = self.dyn.observe(
         prevlat, prevact, embed, obs['is_first'], bdims=1)
-    actor = self.actor(out, bdims=1)
+
+    # -- Begin CEM --
+
+    out_cem, _ = self.cem(out, bdims=1)
+
+    # -- End CEM --
+
+
+
+    actor = self.actor(out_cem, bdims=1)
     act = sample(actor)
 
     outs = {}
@@ -233,11 +247,17 @@ class Agent(nj.Module):
     prevacts = jaxutils.onehot_dict(prevacts, self.act_space)
     embed = self.enc(data)
     newlat, outs = self.dyn.observe(prevlat, prevacts, embed, data['is_first'])
-    rew_feat = outs if self.config.reward_grad else sg(outs)
+
+    # --- Begin CEM for repr. heads
+    cpt_outs, scores = self.cem(outs, training=True)
+
+    # --- End CEM
+
+    rew_feat = cpt_outs if self.config.reward_grad else sg(cpt_outs)
     dists = dict(
-        **self.dec(outs),
+        **self.dec(cpt_outs),
         reward=self.rew(rew_feat, training=True),
-        cont=self.con(outs, training=True))
+        cont=self.con(cpt_outs, training=True))
     losses = {k: -v.log_prob(f32(data[k])) for k, v in dists.items()}
     if self.config.contdisc:
       del losses['cont']
@@ -253,6 +273,9 @@ class Agent(nj.Module):
       lat, act = carry
       lat, out = self.dyn.imagine(lat, act, bdims=1)
       out['stoch'] = sg(out['stoch'])
+      # -- Begin CEM
+      out, _ = self.cem(out, bdims=1)
+      # -- End CEM
       act = cast(sample(self.actor(out, bdims=1)))
       return (lat, act), (out, act)
     rew = data['reward']
@@ -272,14 +295,19 @@ class Agent(nj.Module):
       N = self.config.imag_repeat
       startlat, startout, startrew, startcon = treemap(
           lambda x: x.repeat(N, 0), (startlat, startout, startrew, startcon))
-    startact = cast(sample(self.actor(startout, bdims=1)))
+    
+    # -- Begin CEM --
+    startout_cem, _ = self.cem(startout, bdims=1)
+    # TODO : Finish CEM, need to find a reasonable way to carry this out for predictions
+    # -- End CEM --
+    startact = cast(sample(self.actor(startout_cem, bdims=1)))
     _, (outs, acts) = jaxutils.scan(
         imgstep, sg((startlat, startact)),
         jnp.arange(self.config.imag_length), self.config.imag_unroll)
     outs, acts = treemap(lambda x: x.swapaxes(0, 1), (outs, acts))
     outs, acts = treemap(
         lambda first, seq: jnp.concatenate([first, seq], 1),
-        treemap(lambda x: x[:, None], (startout, startact)), (outs, acts))
+        treemap(lambda x: x[:, None], (startout_cem, startact)), (outs, acts))
 
     # Annotate
     rew = jnp.concatenate([startrew[:, None], self.rew(outs).mean()[:, 1:]], 1)
@@ -328,10 +356,18 @@ class Agent(nj.Module):
         critic.log_prob(sg(ret_padded)) +
         self.config.slowreg * critic.log_prob(sg(slowcritic.mean())))[:, :-1]
 
+    # DONE: Concept Loss
+    concepts = data['concepts']
+    concept_loss = ((scores - concepts) ** 2)
+    losses['concept'] = concept_loss
+
+    # TODO: Orthogonality Loss
+
     if self.config.replay_critic_loss:
+      replay_outs_cem, _ = self.cem(replay_outs, bdims=2)
       replay_critic = self.critic(
-          replay_outs if self.config.replay_critic_grad else sg(replay_outs))
-      replay_slowcritic = self.slowcritic(replay_outs)
+          replay_outs_cem if self.config.replay_critic_grad else sg(replay_outs_cem))
+      replay_slowcritic = self.slowcritic(replay_outs_cem)
       boot = dict(
           imag=ret[:, 0].reshape(data['reward'].shape),
           critic=replay_critic.mean(),
@@ -420,14 +456,28 @@ class Agent(nj.Module):
         {k: v[:, :num_obs] for k, v in outs['prevacts'].items()},
         outs['embed'][:, :num_obs],
         data['is_first'][:, :num_obs])
+
+    # -- Begin CEM --
+    
+    rec_outs_cem, _ = self.cem(rec_outs, bdims=2)
+
+    # -- End CEM --
+
     img_acts = {k: v[:, num_obs:] for k, v in outs['prevacts'].items()}
     img_outs = self.dyn.imagine(img_start, img_acts)[1]
+
+    # -- Begin CEM --
+
+    img_outs_cem, _ = self.cem(img_outs, bdims=2)
+
+    # -- End CEM --
+
     rec = dict(
-        **self.dec(rec_outs), reward=self.rew(rec_outs),
-        cont=self.con(rec_outs))
+        **self.dec(rec_outs_cem), reward=self.rew(rec_outs_cem),
+        cont=self.con(rec_outs_cem))
     img = dict(
-        **self.dec(img_outs), reward=self.rew(img_outs),
-        cont=self.con(img_outs))
+        **self.dec(img_outs_cem), reward=self.rew(img_outs_cem),
+        cont=self.con(img_outs_cem))
 
     # Prediction losses
     data_img = {k: v[:, num_obs:] for k, v in data.items()}
@@ -437,6 +487,8 @@ class Agent(nj.Module):
     metrics.update({f'openl_reward_{k}': v for k, v in stats.items()})
     stats = jaxutils.balance_stats(img['cont'], data_img['cont'], 0.5)
     metrics.update({f'openl_cont_{k}': v for k, v in stats.items()})
+
+    # TODO: Logging concept metrics
 
     # Video predictions
     for key in self.dec.imgkeys:

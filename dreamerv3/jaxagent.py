@@ -74,13 +74,14 @@ class JAXAgent(embodied.Agent):
     self.params = self._init_params(obs_space, act_space)
     self.updates = embodied.Counter()
 
-    pattern = re.compile(self.agent.policy_keys)
+    pattern = re.compile(self.agent.policy_keys) # IMPORTANT!!!
     self.policy_keys = [k for k in self.params.keys() if pattern.search(k)]
     assert self.policy_keys, (list(self.params.keys()), self.agent.policy_keys)
     self.should_sync = embodied.when.Every(self.jaxcfg.sync_every)
     self.policy_params = jax.device_put(
         {k: self.params[k].copy() for k in self.policy_keys},
         self.policy_mirrored)
+    print("POLICY PARAMS", {k: v.shape for k, v in self.policy_params.items() if isinstance(v, jnp.ndarray)})
 
     self._lower_train()
     self._lower_report()
@@ -300,6 +301,8 @@ class JAXAgent(embodied.Agent):
 
     def policy(params, obs, carry, seed, mode):
       pure = nj.pure(self.agent.policy)
+      print({k: v.shape for  k, v in params.items() if isinstance(v, jnp.ndarray)})
+      # exit()
       return pure(params, obs, carry, mode, seed=seed)[1]
 
     def init_train(params, seed, batch_size):
@@ -310,6 +313,7 @@ class JAXAgent(embodied.Agent):
       pure = nj.pure(self.agent.train)
       combined = {**alloc, **donated}
       params, (outs, carry, mets) = pure(combined, data, carry, seed=seed)
+      print({k: v.shape for k, v in params.items() if isinstance(v, jnp.ndarray)})
       mets = {k: v[None] for k, v in mets.items()}
       return params, outs, carry, mets
 
@@ -349,6 +353,7 @@ class JAXAgent(embodied.Agent):
           (m, s, s, s), (m, s), check_rep=False)
 
     ps, pm = self.policy_sharded, self.policy_mirrored
+    print("INITIALIZING POLICY")
     self._init_policy = jax.jit(
         init_policy, (pm, ps), ps, static_argnames=['batch_size'])
     self._policy = jax.jit(
@@ -386,6 +391,7 @@ class JAXAgent(embodied.Agent):
     _, carry = jax.jit(nj.pure(self.agent.init_train), static_argnums=[1])(
         params, B, seed=seed)
     params = nj.init(self.agent.train)(params, data, carry, seed=seed)
+    print({k: v.shape for k, v in params.items() if isinstance(v, jnp.ndarray)})
     return jax.device_put(params, self.train_mirrored)
 
   def _next_seeds(self, sharding):
