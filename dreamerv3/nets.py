@@ -833,11 +833,12 @@ class EmbeddingGenerator(nj.Module):
     self.n_concepts = len(self.ckw['typ'])
     self.inputs = Input(kw['simple']['inputs'], featdims=1)
     self.emb_units = self.ckw['emb_units']
-    self.inter_emb_units = self.n_concepts * self.emb_units * 2
-    self.res_units = self.ckw['res_units']
+    self.inter_emb_units = (2 * self.n_concepts + 1) * self.emb_units # Fixed residual size to emb size
+    self.res_units = self.emb_units
     self.overrides = {
       'emb_enc': {'units': self.inter_emb_units},
-      'emb_dec': {'units': kw['simple']['units']}
+      'emb_dec': {'units': kw['simple']['units']},
+      'res_proj': {'units': self.emb_units}
     }
 
     # CEM concept predictor
@@ -850,19 +851,28 @@ class EmbeddingGenerator(nj.Module):
     feat = self.inputs(inputs, bdims, jaxutils.COMPUTE_DTYPE)
     x = feat.reshape([-1, feat.shape[-1]])
     x = self.get('h0', Linear, **(self.lkw | self.overrides['emb_enc']))(x)
+    # TODO: fetch residual
+    res = x[:, -self.res_units:]
+    x = x[:, :-self.res_units]
     x = x.reshape([-1, self.n_concepts, self.emb_units * 2])
     scores = self._cem_concepts(jax.nn.silu(x))
     x = x.reshape([-1, self.n_concepts, 2, self.emb_units])
 
+    # concept scores
     scores = jax.nn.sigmoid(scores)
 
-    x = x[:, :, 0, :] * scores + x[:, :, 1, :] * (1. - scores)
+    x = x[:, :, 0, :] * scores + x[:, :, 1, :] * (1. - scores) # Abdelsalam et al. 2024 - section 3.1 "Context vectors"
     x = x.reshape([-1, self.n_concepts * self.emb_units])
-    x = self.get('h1', Linear, **(self.lkw | self.overrides['emb_dec']))(x)
-    x = x.reshape([*feat.shape[:bdims], -1])
+
+    ctx = x.copy()
+
+    x = jnp.concatenate([x, res], axis=-1)
+
+    out = self.get('h1', Linear, **(self.lkw | self.overrides['emb_dec']))(x) # Added projection layer
+    out = x.reshape([*feat.shape[:bdims], -1])
     scores = scores.reshape([*feat.shape[:bdims], -1])
     
-    return x, scores
+    return out, scores, (res.reshape([*feat.shape[:bdims], -1]), ctx.reshape([*feat.shape[:bdims], self.n_concepts,  -1]))
 
   def _cem_concepts(self, x):
     fan_shape = (self.emb_units * 2, 1) if self.fan == 'in' else None

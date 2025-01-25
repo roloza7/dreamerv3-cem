@@ -143,7 +143,7 @@ class Agent(nj.Module):
 
     # -- Begin CEM --
 
-    out_cem, _ = self.cem(out, bdims=1)
+    out_cem, _, _ = self.cem(out, bdims=1)
 
     # -- End CEM --
 
@@ -249,7 +249,7 @@ class Agent(nj.Module):
     newlat, outs = self.dyn.observe(prevlat, prevacts, embed, data['is_first'])
 
     # --- Begin CEM for repr. heads
-    cpt_outs, scores = self.cem(outs, training=True)
+    cpt_outs, scores, (residuals, context) = self.cem(outs, training=True)
 
     # --- End CEM
 
@@ -274,7 +274,7 @@ class Agent(nj.Module):
       lat, out = self.dyn.imagine(lat, act, bdims=1)
       out['stoch'] = sg(out['stoch'])
       # -- Begin CEM
-      out, _ = self.cem(out, bdims=1)
+      out, _, _ = self.cem(out, bdims=1)
       # -- End CEM
       act = cast(sample(self.actor(out, bdims=1)))
       return (lat, act), (out, act)
@@ -297,7 +297,7 @@ class Agent(nj.Module):
           lambda x: x.repeat(N, 0), (startlat, startout, startrew, startcon))
     
     # -- Begin CEM --
-    startout_cem, _ = self.cem(startout, bdims=1)
+    startout_cem, _ , _ = self.cem(startout, bdims=1)
     # TODO : Finish CEM, need to find a reasonable way to carry this out for predictions
     # -- End CEM --
     startact = cast(sample(self.actor(startout_cem, bdims=1)))
@@ -362,9 +362,15 @@ class Agent(nj.Module):
     losses['concept'] = concept_loss
 
     # TODO: Orthogonality Loss
+    ctx_norm = context / jnp.linalg.norm(context, axis=-1, keepdims=True)
+    res_norm = residuals / jnp.linalg.norm(residuals, axis=-1, keepdims=True)
+    
+    ortho_loss = (ctx_norm * res_norm[..., None, :]).mean()
+    losses['ortho'] = ortho_loss
+
 
     if self.config.replay_critic_loss:
-      replay_outs_cem, _ = self.cem(replay_outs, bdims=2)
+      replay_outs_cem, _, _ = self.cem(replay_outs, bdims=2)
       replay_critic = self.critic(
           replay_outs_cem if self.config.replay_critic_grad else sg(replay_outs_cem))
       replay_slowcritic = self.slowcritic(replay_outs_cem)
@@ -459,7 +465,7 @@ class Agent(nj.Module):
 
     # -- Begin CEM --
     
-    rec_outs_cem, _ = self.cem(rec_outs, bdims=2)
+    rec_outs_cem, _, _ = self.cem(rec_outs, bdims=2)
 
     # -- End CEM --
 
@@ -468,7 +474,7 @@ class Agent(nj.Module):
 
     # -- Begin CEM --
 
-    img_outs_cem, _ = self.cem(img_outs, bdims=2)
+    img_outs_cem, _, _ = self.cem(img_outs, bdims=2)
 
     # -- End CEM --
 
