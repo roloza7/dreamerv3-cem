@@ -148,14 +148,15 @@ def make_agent(config):
 def make_logger(config):
   step = embodied.Counter()
   logdir = config.logdir
+  logid = config.logid
   multiplier = config.env.get(config.task.split('_')[0], {}).get('repeat', 1)
   logger = embodied.Logger(step, [
       embodied.logger.TerminalOutput(config.filter, 'Agent'),
       embodied.logger.JSONLOutput(logdir, 'metrics.jsonl'),
       embodied.logger.JSONLOutput(logdir, 'scores.jsonl', 'episode/score'),
-      embodied.logger.TensorBoardOutput(
-          logdir, config.run.log_video_fps, config.tensorboard_videos),
-      # embodied.logger.WandbOutput(logdir.name, ...),
+      # embodied.logger.TensorBoardOutput(
+      #     logdir, config.run.log_video_fps, config.tensorboard_videos),
+      embodied.logger.WandBOutput(logid, project="cbwm-explainability", id=logid, resume="allow", dir="./outputs/wandb"),
   ], multiplier)
   return logger
 

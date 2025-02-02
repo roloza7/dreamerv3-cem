@@ -4,4 +4,9 @@ __pycache__/
 *.py[cod]
 *.egg-info
 MUJOCO_LOG.TXT
+archive/
+logs/
+outputs/
+wandb/
+*.out
 ;

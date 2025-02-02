@@ -4,6 +4,7 @@ defaults:
   method: name
   task: dummy_disc
   logdir: /dev/null
+  logid: id
   eval_dir: ''
   filter: 'score|length|fps|ratio|train/.*_loss$|train/rand/.*/mean'
   tensorboard_videos: True
@@ -88,7 +89,7 @@ defaults:
   # Agent
   report: True
   report_gradnorms: False
-  batch_size: 16
+  batch_size: 24
   batch_length: 65
   batch_length_eval: 33
   replay_length: 0
