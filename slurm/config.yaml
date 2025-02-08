@@ -1,0 +1,4 @@
+passive: crafter size12m crafter-passive
+aggressive: crafter size12m crafter-aggressive
+all: crafter size50m crafter-all
+test: crafter debug

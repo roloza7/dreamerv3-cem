@@ -8,5 +8,6 @@ archive/
 logs/
 outputs/
 wandb/
+data/
 *.out
 ;

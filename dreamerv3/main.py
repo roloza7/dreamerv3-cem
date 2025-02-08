@@ -156,7 +156,7 @@ def make_logger(config):
       embodied.logger.JSONLOutput(logdir, 'scores.jsonl', 'episode/score'),
       # embodied.logger.TensorBoardOutput(
       #     logdir, config.run.log_video_fps, config.tensorboard_videos),
-      embodied.logger.WandBOutput(logid, project="cbwm-explainability", id=logid, resume="allow", dir="./outputs/wandb"),
+      embodied.logger.WandBOutput(logid, project="cbwm-explainability", id=logid, resume="allow", dir="./wandb", mode="online"),
   ], multiplier)
   return logger
 

@@ -22,13 +22,18 @@ for arg in "$@"; do
     if $GETNAME; then
         NAME="$arg"
         GETNAME=false
+        continue
     fi
     if [[ "$arg" == "--resume" ]]; then
         RESUME=true
+        continue
     fi
     if [[ "$arg" == "--overcap" ]]; then
         PARTITION="overcap"  
+        continue
     fi
+    echo "Unknown argument: $arg"
+    exit 1
 done
 
 if [ "$NAME" == "null" ]; then
@@ -37,7 +42,7 @@ if [ "$NAME" == "null" ]; then
 fi
 
 if $RESUME; then
-    LOGDIR=$(find ./logs/${NAME}-* -maxdepth 1 -type d -printf "%T@ %p\n" | sort -nr | head -n 1 | awk '{print $2}')
+    LOGDIR=$(find ./logs/${NAME}-* -maxdepth 0 -type d -printf "%T@ %p\n" | sort -nr | head -n 1 | awk '{print $2}')
     uuid=$(basename "$LOGDIR")
     echo "Resuming run with logdir: ${GREEN}$LOGDIR${NC} from uuid: ${GREEN}$uuid${NC}"
 else
@@ -51,6 +56,6 @@ REALLOGDIR=$(realpath $LOGDIR)
 
 export LOGDIR=${LOGDIR}
 export NAME=${NAME}
-sbatch --exclude=consu,spot --error "$REALLOGDIR/stderr.out" --output "$REALLOGDIR/stdout.out" --partition $PARTITION slurm/autoslurm.sh
+# sbatch --error "$REALLOGDIR/stderr.out" --output "$REALLOGDIR/stdout.out" --partition $PARTITION slurm/entrypoint.sh
 
 echo $NAME
