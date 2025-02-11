@@ -8,7 +8,6 @@ import crafter
 import crafter.constants as constants
 import crafter.objects as objects
 
-
 class Crafter(embodied.Env):
 
   PLAYER_ID = 13
@@ -17,7 +16,7 @@ class Crafter(embodied.Env):
   PRESENCE_FILTER = ['water', 'tree', 'lava', 'coal', 'iron', 'diamond', 'table', 'furnace',
                       crafter.objects.Cow, crafter.objects.Zombie, crafter.objects.Skeleton, crafter.objects.Plant]
 
-  def __init__(self, task, size=(64, 64), logs=False, logdir=None, seed=None, concepts=[]):
+  def __init__(self, task, size=(64, 64), logs=False, logdir=None, seed=None, concepts=""):
     assert task in ('reward', 'noreward')
     self._env = crafter.Env(size=size, reward=(task == 'reward'), seed=seed)
     self._logs = logs
@@ -30,7 +29,7 @@ class Crafter(embodied.Env):
     self._done = True
 
     # concept supervision
-    self._concept_filter = np.array(concepts)
+    self._concept_filter = Crafter.parse_concepts("".join(concepts))
     self._num_concepts = len(self._concept_filter)
     self.obj2id = self._env._world._mat_ids | self._env._sem_view._obj_ids
     self.id2obj = {v: k for k, v in self.obj2id.items() }
@@ -88,6 +87,22 @@ class Crafter(embodied.Env):
       if x.size == 0:
           return np.inf
       return np.abs(x - y).sum(axis=1).min()
+
+  @staticmethod
+  def parse_concepts(concepts : str) -> np.ndarray:
+      # concepts : str in the form '1,2,3-9,22-30'
+      # return np array with each concept index including ranges
+      if len(concepts) == 0:
+          raise ValueError("Concepts cannot be empty")
+      concept_list = []
+      print(concepts)
+      for concept_or_range in concepts.split(','):
+          if '-' in concept_or_range:
+              start, end = map(int, concept_or_range.split('-'))
+              concept_list += list(range(start, end + 1))
+          else:
+              concept_list.append(int(concept_or_range))
+      return np.array(sorted(concept_list))
   
   def _is_near_hostile(self) -> None:
       

@@ -57,7 +57,7 @@ if [[ $CONFIG == "null" ]]; then
     exit 1
 fi
 
-CONFIGS=$(grep "^$CONFIG" $CONFIG_PATH | cut -d' ' -f2-)
+CONFIGS=$(grep "^$CONFIG:" $CONFIG_PATH | cut -d' ' -f2-)
 
 if [[ -z $CONFIGS ]]; then
     echo "${RED}Config not found in config.yaml${NC}"
@@ -77,7 +77,7 @@ else
     echo "Starting run from scratch with logdir: ${GREEN}$LOGDIR${NC} from uuid ${GREEN}$uuid${NC}"
 fi
 
-echo "WIll be using partition: ${GREEN}${PARTITION}${NC}"
+echo "Will be using partition: ${GREEN}${PARTITION}${NC}"
 
 export LOGDIR=${LOGDIR}
 export NAME=${NAME}

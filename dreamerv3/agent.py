@@ -249,7 +249,7 @@ class Agent(nj.Module):
     newlat, outs = self.dyn.observe(prevlat, prevacts, embed, data['is_first'])
 
     # --- Begin CEM for repr. heads
-    cpt_outs, scores, (residuals, context) = self.cem(outs, training=True)
+    cpt_outs, scores, (residuals, context, concept_embeddings) = self.cem(outs, training=True)
 
     # --- End CEM
 
@@ -368,6 +368,13 @@ class Agent(nj.Module):
     ortho_loss = (ctx_norm * res_norm[..., None, :]).mean()
     losses['ortho'] = ortho_loss
 
+
+    # Experimental variance matching loss
+    score_std = jnp.std(scores, axis=(0, 1))
+    concept_std = jnp.mean(jnp.std(concept_embeddings, axis=(0, 1)), axis=(-1, -2))
+
+    losses['var_match'] = jnp.mean((score_std - concept_std) ** 2)
+    
 
     if self.config.replay_critic_loss:
       replay_outs_cem, _, _ = self.cem(replay_outs, bdims=2)
