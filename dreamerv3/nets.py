@@ -833,13 +833,17 @@ class EmbeddingGenerator(nj.Module):
     self.n_concepts = len(self.ckw['typ'])
     self.inputs = Input(kw['simple']['inputs'], featdims=1)
     self.emb_units = self.ckw['emb_units']
-    self.inter_emb_units = (2 * self.n_concepts + 1) * self.emb_units # Fixed residual size to emb size
+    self.inter_emb_units = (self.n_concepts * 2 + 1) * self.emb_units # Fixed residual size to emb size
     self.res_units = self.emb_units
     self.overrides = {
       'emb_enc': {'units': self.inter_emb_units},
       'emb_dec': {'units': kw['simple']['units']},
       'res_proj': {'units': self.emb_units}
     }
+
+    self.head_bias = self.ckw["head_bias"]
+    self.weight_reg = self.ckw["weight_reg"]
+    self.fix_embedding = self.ckw["fix_embedding"]
 
     # CEM concept predictor
     self._winit = Initializer(
@@ -858,11 +862,23 @@ class EmbeddingGenerator(nj.Module):
     scores = self._cem_concepts(jax.nn.silu(x))
     x = x.reshape([-1, self.n_concepts, 2, self.emb_units])
 
+    cpt = x.copy()
+
     # concept scores
     scores = jax.nn.sigmoid(scores)
 
+    # neg_emb = self.get('neg_emb', self._binit, (1, 1, self.emb_units)).astype(x.dtype)
     x = x[:, :, 0, :] * scores + x[:, :, 1, :] * (1. - scores) # Abdelsalam et al. 2024 - section 3.1 "Context vectors"
     x = x.reshape([-1, self.n_concepts * self.emb_units])
+
+    # TODO: Have to make a couple changes here. Perhaps set modes of operation?
+    # 1.: Normal operation a la Abdelsalam et al. 2024
+    # 2.: Linear result interpolated with a constant negative vector
+    # 3.: Something something, make the residual vector position agnostic (like attention pooling or something)
+    # 3.1 - The intent behind this is to further reduce information leakage (since the now all concepts live in the same vector space)
+    
+    # TODO: Add ability to set predicted concepts, but not pass them past the bottleneck
+    # Including this in the loss calculations could allow the model to explicitly ignore specific concepts
 
     ctx = x.copy()
 
@@ -872,15 +888,15 @@ class EmbeddingGenerator(nj.Module):
     out = x.reshape([*feat.shape[:bdims], -1])
     scores = scores.reshape([*feat.shape[:bdims], -1])
     
-    return out, scores, (res.reshape([*feat.shape[:bdims], -1]), ctx.reshape([*feat.shape[:bdims], self.n_concepts,  -1]))
+    return out, scores, (res.reshape([*feat.shape[:bdims], -1]), ctx.reshape([*feat.shape[:bdims], self.n_concepts,  -1]), cpt.reshape([*feat.shape[:bdims], self.n_concepts, 2, -1]))
 
   def _cem_concepts(self, x):
-    fan_shape = (self.emb_units * 2, 1) if self.fan == 'in' else None
+    fan_shape = (self.emb_units, 1) if self.fan == 'in' else None
     shape = (self.n_concepts, self.emb_units * 2, 1)
     kernel = self.get('kernel', self._winit, shape, fan_shape).astype(x.dtype)
     x = jnp.einsum('bce,cej->bcj', x, kernel)
 
-    if self.bias:
+    if self.head_bias:
       if self.binit:
         raise NotImplementedError()
       else:

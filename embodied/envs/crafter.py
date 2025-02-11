@@ -8,7 +8,6 @@ import crafter
 import crafter.constants as constants
 import crafter.objects as objects
 
-
 class Crafter(embodied.Env):
 
   PLAYER_ID = 13
@@ -17,7 +16,7 @@ class Crafter(embodied.Env):
   PRESENCE_FILTER = ['water', 'tree', 'lava', 'coal', 'iron', 'diamond', 'table', 'furnace',
                       crafter.objects.Cow, crafter.objects.Zombie, crafter.objects.Skeleton, crafter.objects.Plant]
 
-  def __init__(self, task, size=(64, 64), logs=False, logdir=None, seed=None):
+  def __init__(self, task, size=(64, 64), logs=False, logdir=None, seed=None, concepts=""):
     assert task in ('reward', 'noreward')
     self._env = crafter.Env(size=size, reward=(task == 'reward'), seed=seed)
     self._logs = logs
@@ -30,6 +29,8 @@ class Crafter(embodied.Env):
     self._done = True
 
     # concept supervision
+    self._concept_filter = Crafter.parse_concepts("".join(concepts))
+    self._num_concepts = len(self._concept_filter)
     self.obj2id = self._env._world._mat_ids | self._env._sem_view._obj_ids
     self.id2obj = {v: k for k, v in self.obj2id.items() }
     self.obj_concept_filter = np.array([self.obj2id[concept] for concept in Crafter.PRESENCE_FILTER])
@@ -48,7 +49,7 @@ class Crafter(embodied.Env):
         'is_last': embodied.Space(bool),
         'is_terminal': embodied.Space(bool),
         'log_reward': embodied.Space(np.float32),
-        'concepts': embodied.Space(np.float32, (22,), low=0.0, high=1.0)
+        'concepts': embodied.Space(np.float32, (self._num_concepts,), low=0.0, high=1.0)
     }
     if self._logs:
       spaces.update({
@@ -86,6 +87,22 @@ class Crafter(embodied.Env):
       if x.size == 0:
           return np.inf
       return np.abs(x - y).sum(axis=1).min()
+
+  @staticmethod
+  def parse_concepts(concepts : str) -> np.ndarray:
+      # concepts : str in the form '1,2,3-9,22-30'
+      # return np array with each concept index including ranges
+      if len(concepts) == 0:
+          raise ValueError("Concepts cannot be empty")
+      concept_list = []
+      print(concepts)
+      for concept_or_range in concepts.split(','):
+          if '-' in concept_or_range:
+              start, end = map(int, concept_or_range.split('-'))
+              concept_list += list(range(start, end + 1))
+          else:
+              concept_list.append(int(concept_or_range))
+      return np.array(sorted(concept_list))
   
   def _is_near_hostile(self) -> None:
       
@@ -126,8 +143,16 @@ class Crafter(embodied.Env):
       player_health = np.array([self._env._player.health / 9])
       # [0, 25] normalized
       player_hunger = np.array([self._env._player._hunger / 25])
-            
-      return np.concatenate([material_presence, can_make, near_hostile, player_health, player_hunger], dtype=np.float32)
+
+      player_achievements = np.array([1 if v > 0 else 0 for v in self._env._player.achievements.values()], dtype=np.float32)
+
+      # Achievements [22, 43]
+      # Coal, Diamond, Drink, Iron, Sapling, Stone, Wood, Defeat Skeleton, Defeat Zombie, Eat Cow, Eat Plant, 
+      # Make Iron Pick, Make Iron Sword, Make Stone Pick, Make Stone Sword, Make Wood Pick, Make Wood Pickaxe, Make Wood Sword,
+      # Place Furnace, Place Plant, Place Stone, Place Table, Wake Up.
+      all_concepts = np.concatenate([material_presence, can_make, near_hostile, player_health, player_hunger, player_achievements], dtype=np.float32)
+      # Total 43 concepts	
+      return all_concepts[self._concept_filter]
 
   def step(self, action):
     if action['reset'] or self._done:
