@@ -1,7 +1,7 @@
-passive: crafter size12m crafter-passive var-match
-passive-no-var-match: crafter size12m crafter-passive no-var-match
-aggressive: crafter size12m crafter-aggressive var-match
-aggressive-no-var-match: crafter size12m crafter-aggressive no-var-match
+passive: crafter size12m crafter-passive
+passive-full-ortho: crafter size12m crafter-passive full-ortho
+aggressive: crafter size12m crafter-aggressive
+aggressive-full-ortho: crafter size12m crafter-aggressive full-ortho
 weak: crafter size12m crafter-weak
 all: crafter size50m crafter-all
 test: crafter debug
