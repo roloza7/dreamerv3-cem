@@ -365,16 +365,19 @@ class Agent(nj.Module):
     ctx_norm = context / jnp.linalg.norm(context, axis=-1, keepdims=True)
     res_norm = residuals / jnp.linalg.norm(residuals, axis=-1, keepdims=True)
     
-    ortho_loss = (ctx_norm * res_norm[..., None, :]).mean()
+    if self.config.orthogonality_loss == "res":
+      ortho_loss = (ctx_norm * res_norm[..., None, :]).mean()
+    elif self.config.orthogonality_loss == "full":
+      all_vectors_norm = jnp.concatenate([ctx_norm, res_norm[..., None, :]], axis=-2)
+      ortho_loss = jnp.sum(all_vectors_norm[..., None, :, :] * all_vectors_norm[..., None, :], axis=-1)
+      loss_w = ortho_loss.shape[-1]
+      ortho_mask = 1 - jnp.eye(loss_w, dtype=ortho_loss.dtype)
+      ortho_loss = (ortho_loss * ortho_mask).sum() / (loss_w * (loss_w - 1))
+    elif self.config.orthogonality_loss == "none":
+      ortho_loss = 0
+    else:
+      raise NotImplementedError(self.config.orthogonality_loss)
     losses['ortho'] = ortho_loss
-
-
-    # Experimental variance matching loss
-    score_std = jnp.std(scores, axis=(0, 1))
-    concept_std = jnp.mean(jnp.std(concept_embeddings, axis=(0, 1)), axis=(-1, -2))
-
-    losses['var_match'] = jnp.mean((score_std - concept_std) ** 2)
-    
 
     if self.config.replay_critic_loss:
       replay_outs_cem, _, _ = self.cem(replay_outs, bdims=2)
