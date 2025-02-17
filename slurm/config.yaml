@@ -1,7 +1,9 @@
 passive: crafter size12m crafter-passive
 passive-full-ortho: crafter size12m crafter-passive full-ortho
+passive-adversarial: crafter size12m crafter-passive adversarial offline
 aggressive: crafter size12m crafter-aggressive
 aggressive-full-ortho: crafter size12m crafter-aggressive full-ortho
+aggressive-adversarial: crafter size12m crafter-aggressive adversarial offline
 weak: crafter size12m crafter-weak
 all: crafter size50m crafter-all
 test: crafter debug

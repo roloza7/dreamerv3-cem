@@ -249,7 +249,7 @@ class Agent(nj.Module):
     newlat, outs = self.dyn.observe(prevlat, prevacts, embed, data['is_first'])
 
     # --- Begin CEM for repr. heads
-    cpt_outs, scores, (residuals, context, concept_embeddings) = self.cem(outs, training=True)
+    cpt_outs, scores, (residuals, context) = self.cem(outs, training=True, full_scores=self.config.cem.cpt.adversarial)
 
     # --- End CEM
 
@@ -358,8 +358,27 @@ class Agent(nj.Module):
 
     # DONE: Concept Loss
     concepts = data['concepts']
-    concept_loss = ((scores - concepts) ** 2)
-    losses['concept'] = concept_loss
+    if self.config.cem.cpt.adversarial:
+      head_scores, emb_scores = scores
+      # We want to optimize head stores to be good
+      # and emb scores to be good diagonally and bad off-diagonally
+
+      # Broadcasting accross the head dimension, that way each head tries to predict everything
+      concepts = concepts[..., None, :]
+      head_concept_loss = ((head_scores - concepts) ** 2)
+
+      # Seleects the diagonal scores
+      mask = jnp.eye(concepts.shape[-1], dtype=emb_scores.dtype)[None, None, ...] # (1, 1, C, C)
+
+      phi_tgt = concepts * mask + (1 - concepts) * (1 - mask)
+
+      emb_concept_loss = ((emb_scores - phi_tgt) ** 2)
+
+      # Average them for equivalence
+      losses['concept'] = (head_concept_loss + emb_concept_loss) / 2
+    else:
+      concept_loss = ((scores - concepts) ** 2)
+      losses['concept'] = concept_loss
 
     # TODO: Orthogonality Loss
     ctx_norm = context / jnp.linalg.norm(context, axis=-1, keepdims=True)

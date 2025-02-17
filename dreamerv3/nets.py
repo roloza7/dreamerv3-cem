@@ -842,8 +842,7 @@ class EmbeddingGenerator(nj.Module):
     }
 
     self.head_bias = self.ckw["head_bias"]
-    self.weight_reg = self.ckw["weight_reg"]
-    self.fix_embedding = self.ckw["fix_embedding"]
+    self.adversarial = self.ckw["adversarial"]
 
     # CEM concept predictor
     self._winit = Initializer(
@@ -851,7 +850,7 @@ class EmbeddingGenerator(nj.Module):
     )
     self._binit = Initializer('zeros', 1.0, self.fan, self.dtype)
   
-  def __call__(self, inputs, bdims=2, training=False):
+  def __call__(self, inputs, bdims=2, training=False, full_scores=False):
     feat = self.inputs(inputs, bdims, jaxutils.COMPUTE_DTYPE)
     x = feat.reshape([-1, feat.shape[-1]])
     x = self.get('h0', Linear, **(self.lkw | self.overrides['emb_enc']))(x)
@@ -859,41 +858,62 @@ class EmbeddingGenerator(nj.Module):
     res = x[:, -self.res_units:]
     x = x[:, :-self.res_units]
     x = x.reshape([-1, self.n_concepts, self.emb_units * 2])
-    scores = self._cem_concepts(jax.nn.silu(x))
+
+    # TODO: Branch for adversarial
+    if self.adversarial:
+      # Here scores are (*, n_concepts, n_concepts)
+      # This part is a little tricky
+      # We want to optimize the prediction heads to be good at predicting every concept
+      # At the same time we want to optimize the embeddings to be good at predicting the diagonal
+      # And be bad at predicting the others
+      head_scores = self._cem_concepts(jax.nn.silu(x), stop='kernel')
+      emb_scores = self._cem_concepts(jax.nn.silu(x), stop='x')
+
+      # We take "scores" as the diagonal of the head_scores
+      scores = jnp.diagonal(head_scores, axis1=-2, axis2=-1)[..., None]
+
+      head_scores = head_scores.reshape([*feat.shape[:bdims], self.n_concepts, self.n_concepts])
+      emb_scores = emb_scores.reshape([*feat.shape[:bdims], self.n_concepts, self.n_concepts])
+    else:
+      # Here scores are (*, n_concepts, 1)
+      scores = jax.nn.sigmoid(self._cem_concepts(jax.nn.silu(x)))
+
     x = x.reshape([-1, self.n_concepts, 2, self.emb_units])
-
-    cpt = x.copy()
-
-    # concept scores
-    scores = jax.nn.sigmoid(scores)
-
-    # neg_emb = self.get('neg_emb', self._binit, (1, 1, self.emb_units)).astype(x.dtype)
     x = x[:, :, 0, :] * scores + x[:, :, 1, :] * (1. - scores) # Abdelsalam et al. 2024 - section 3.1 "Context vectors"
     x = x.reshape([-1, self.n_concepts * self.emb_units])
+    mixed_concepts = x.copy()
 
-    # TODO: Have to make a couple changes here. Perhaps set modes of operation?
-    # 1.: Normal operation a la Abdelsalam et al. 2024
-    # 2.: Linear result interpolated with a constant negative vector
-    # 3.: Something something, make the residual vector position agnostic (like attention pooling or something)
-    # 3.1 - The intent behind this is to further reduce information leakage (since the now all concepts live in the same vector space)
-    
-    # TODO: Add ability to set predicted concepts, but not pass them past the bottleneck
-    # Including this in the loss calculations could allow the model to explicitly ignore specific concepts
-
-    ctx = x.copy()
-
+    # Back at (*, n_concepts * emb_units)
     x = jnp.concatenate([x, res], axis=-1)
 
     out = self.get('h1', Linear, **(self.lkw | self.overrides['emb_dec']))(x) # Added projection layer
     out = x.reshape([*feat.shape[:bdims], -1])
     scores = scores.reshape([*feat.shape[:bdims], -1])
     
-    return out, scores, (res.reshape([*feat.shape[:bdims], -1]), ctx.reshape([*feat.shape[:bdims], self.n_concepts,  -1]), cpt.reshape([*feat.shape[:bdims], self.n_concepts, 2, -1]))
+    if full_scores:
+      return out, (head_scores, emb_scores), (res.reshape([*feat.shape[:bdims], -1]), mixed_concepts.reshape([*feat.shape[:bdims], self.n_concepts,  -1]))
 
-  def _cem_concepts(self, x):
-    fan_shape = (self.emb_units, 1) if self.fan == 'in' else None
-    shape = (self.n_concepts, self.emb_units * 2, 1)
+    return out, scores, (res.reshape([*feat.shape[:bdims], -1]), mixed_concepts.reshape([*feat.shape[:bdims], self.n_concepts,  -1]))
+
+  def _cem_concepts(self, x, stop=None):
+    if self.adversarial:
+      fan_shape = (self.emb_units, self.emb_units) if self.fan == 'in' else None
+      shape = (self.n_concepts, self.emb_units * 2, self.n_concepts)
+    else:
+      fan_shape = (self.emb_units, 1) if self.fan == 'in' else None
+      shape = (self.n_concepts, self.emb_units * 2, 1)
+
     kernel = self.get('kernel', self._winit, shape, fan_shape).astype(x.dtype)
+
+    if stop == 'kernel':
+      kernel = sg(kernel)
+    elif stop == 'x':
+      x = sg(x)
+    elif stop == None:
+      pass
+    else:
+      raise NotImplementedError()
+
     x = jnp.einsum('bce,cej->bcj', x, kernel)
 
     if self.head_bias:

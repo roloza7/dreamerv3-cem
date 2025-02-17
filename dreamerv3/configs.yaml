@@ -7,8 +7,9 @@ defaults:
   logid: id
   eval_dir: ''
   filter: 'score|length|fps|ratio|train/.*_loss$|train/rand/.*/mean'
-  tags: []
+  tags: ['train']
   tensorboard_videos: True
+  wandb: 'enabled'
 
   replay:
     size: 5e6
@@ -79,7 +80,7 @@ defaults:
   wrapper: {length: 0, reset: True, discretize: 0, checks: True}
   env:
     atari: {size: [64, 64], repeat: 4, sticky: True, gray: True, actions: all, lives: unused, noops: 0, autostart: False, pooling: 2, aggregate: max, resize: pillow}
-    crafter: {size: [64, 64], logs: False, use_logdir: False, concepts: [0]}
+    crafter: {size: [64, 64], logs: False, use_logdir: False, concepts: "1-10"}
     atari100k: {size: [64, 64], repeat: 4, sticky: False, gray: False, actions: all, lives: unused, noops: 0, autostart: False, resize: pillow, length: 100000}
     dmlab: {size: [64, 64], repeat: 4, episodic: True, actions: popart, use_seed: False}
     minecraft: {size: [64, 64], break_speed: 100.0, logs: False}
@@ -126,10 +127,9 @@ defaults:
     simple: {layers: 1, units: 1024, norm: none, inputs: [deter, stoch], winit: normal, block_fans: False, block_norm: False}
     cpt: {
       emb_units: 16,
-      typ: [bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin, bin],
+      typ: [bin, bin, bin, bin, bin, bin, bin, bin, bin, bin],
       head_bias: False,
-      weight_reg: False,
-      fix_embedding: "none" # "pos | neg | both | none"
+      adversarial: False
     }
 
   
@@ -221,6 +221,13 @@ crafter-passive:
 # Full ortho
 full-ortho:
   orthogonality_loss: full
+
+adversarial:
+  cem: {
+    cpt: {
+      adversarial: True
+    }
+  }
 
 crafter-all:
   env:
@@ -351,3 +358,9 @@ debug:
   .*\.layers: 2
   .*\.units: 8
   .*\.depth: 2
+
+no-log:
+  wandb: 'disabled'
+
+offline:
+  wandb: 'offline'

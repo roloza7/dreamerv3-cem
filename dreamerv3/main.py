@@ -149,15 +149,19 @@ def make_logger(config):
   step = embodied.Counter()
   logdir = config.logdir
   logid = config.logid
+  wandb_mode = "offline" if config.jax.debug or config.wandb == "offline" else "online"
   multiplier = config.env.get(config.task.split('_')[0], {}).get('repeat', 1)
-  logger = embodied.Logger(step, [
+
+  log_dest = [
       embodied.logger.TerminalOutput(config.filter, 'Agent'),
       embodied.logger.JSONLOutput(logdir, 'metrics.jsonl'),
-      embodied.logger.JSONLOutput(logdir, 'scores.jsonl', 'episode/score'),
-      # embodied.logger.TensorBoardOutput(
-      #     logdir, config.run.log_video_fps, config.tensorboard_videos),
-      embodied.logger.WandBOutput(logid, project="cbwm-explainability", id=logid, resume="allow", dir=".", mode="online", tags=config.tags),
-  ], multiplier)
+      embodied.logger.JSONLOutput(logdir, 'scores.jsonl', 'episode/score')
+  ]
+
+  if config.wandb != 'disabled':
+      embodied.logger.WandBOutput(logid, project="cbwm-explainability", id=logid, resume="allow", dir=".", mode=wandb_mode, tags=config.tags)
+
+  logger = embodied.Logger(step, log_dest, multiplier)
   return logger
 
 
