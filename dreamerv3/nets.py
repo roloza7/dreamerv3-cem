@@ -817,7 +817,7 @@ class Input:
           f'Requested keys: {self.keys}')
     return xs
 
-class EmbeddingGenerator(nj.Module):
+class ConceptEmbedding(nj.Module):
 
   winit: str = 'normal'
   binit: bool = False
@@ -827,14 +827,22 @@ class EmbeddingGenerator(nj.Module):
   bias : bool = True
 
   def __init__(self, **kw):
-    self.ckw = {k: v for k, v in kw['cpt'].items()}
+    self.ckw = {k: v for k, v in kw['concepts'].items()}
     linonly = ('units', 'norm', 'winit')
     self.lkw = {k: v for k, v in kw['simple'].items() if k in linonly}
-    self.n_concepts = len(self.ckw['typ'])
+    self.concept_ids = ConceptEmbedding.parse_concepts(self.ckw['concepts'])
+    self.exclude_ids = ConceptEmbedding.parse_concepts(self.ckw['exclude'], strict=False)
+    self.include_ids = ConceptEmbedding.get_include_ids(self.concept_ids, self.exclude_ids)
+    self.n_concepts = len(self.concept_ids)
+    self.n_used_concepts = len(self.include_ids)
     self.inputs = Input(kw['simple']['inputs'], featdims=1)
+    self.res_units = self.ckw['residual_units']
     self.emb_units = self.ckw['emb_units']
-    self.inter_emb_units = (self.n_concepts * 2 + 1) * self.emb_units # Fixed residual size to emb size
-    self.res_units = self.emb_units
+    if self.res_units < 0:
+      raise ValueError('Residual units must be >= 0')
+    if kw['orthogonality_loss'] not in ['none', 'concepts_only'] and (self.res_units != self.emb_units or self.res_units == 0):
+      raise ValueError('Residual units must be positive and equal to embedding units for orthogonality loss')
+    self.inter_emb_units = self.n_concepts * 2 * self.emb_units + self.res_units
     self.overrides = {
       'emb_enc': {'units': self.inter_emb_units},
       'emb_dec': {'units': kw['simple']['units']},
@@ -855,8 +863,11 @@ class EmbeddingGenerator(nj.Module):
     x = feat.reshape([-1, feat.shape[-1]])
     x = self.get('h0', Linear, **(self.lkw | self.overrides['emb_enc']))(x)
     # TODO: fetch residual
-    res = x[:, -self.res_units:]
-    x = x[:, :-self.res_units]
+    if self.res_units > 0:
+      res = x[:, -self.res_units:]
+      x = x[:, :-self.res_units]
+    else:
+      res = None
     x = x.reshape([-1, self.n_concepts, self.emb_units * 2])
 
     # TODO: Branch for adversarial
@@ -880,20 +891,27 @@ class EmbeddingGenerator(nj.Module):
 
     x = x.reshape([-1, self.n_concepts, 2, self.emb_units])
     x = x[:, :, 0, :] * scores + x[:, :, 1, :] * (1. - scores) # Abdelsalam et al. 2024 - section 3.1 "Context vectors"
-    x = x.reshape([-1, self.n_concepts * self.emb_units])
-    mixed_concepts = x.copy()
 
+    # These are used for orthogonality losses later, so we only want to filter concepts after the copy
+    mixed_concepts = x.copy() # Saved as (*, n_concepts, emb_units)
+    
+    x = x[:, self.include_ids, :] # Filter out excluded concepts
     # Back at (*, n_concepts * emb_units)
-    x = jnp.concatenate([x, res], axis=-1)
+    x = x.reshape([-1, self.n_used_concepts * self.emb_units])
+    if self.res_units > 0:
+      x = jnp.concatenate([x, res], axis=-1)
 
     out = self.get('h1', Linear, **(self.lkw | self.overrides['emb_dec']))(x) # Added projection layer
     out = x.reshape([*feat.shape[:bdims], -1])
     scores = scores.reshape([*feat.shape[:bdims], -1])
+
+    if self.res_units > 0:
+      res = res.reshape([*feat.shape[:bdims], -1])
     
     if full_scores:
-      return out, (head_scores, emb_scores), (res.reshape([*feat.shape[:bdims], -1]), mixed_concepts.reshape([*feat.shape[:bdims], self.n_concepts,  -1]))
+      return out, (head_scores, emb_scores), (res, mixed_concepts.reshape([*feat.shape[:bdims], self.n_concepts,  -1]))
 
-    return out, scores, (res.reshape([*feat.shape[:bdims], -1]), mixed_concepts.reshape([*feat.shape[:bdims], self.n_concepts,  -1]))
+    return out, scores, (res, mixed_concepts.reshape([*feat.shape[:bdims], self.n_concepts,  -1]))
 
   def _cem_concepts(self, x, stop=None):
     if self.adversarial:
@@ -925,6 +943,33 @@ class EmbeddingGenerator(nj.Module):
     assert x.dtype == jaxutils.COMPUTE_DTYPE, (x.dtype, x.shape)
     return x
 
+  @staticmethod
+  def parse_concepts(concepts : str, strict : bool = True) -> np.ndarray:
+      # concepts : str in the form '1,2,3-9,22-30'
+      # return np array with each concept index including ranges
+      if len(concepts) == 0 and strict:
+          raise ValueError("Concepts cannot be empty")
+      elif len(concepts) == 0:
+          return np.array([])
+      concept_list = []
+      print(concepts)
+      for concept_or_range in concepts.split(','):
+          if '-' in concept_or_range:
+              start, end = map(int, concept_or_range.split('-'))
+              concept_list += list(range(start, end + 1))
+          else:
+              concept_list.append(int(concept_or_range))
+      return np.array(sorted(concept_list))
+  
+  @staticmethod
+  def get_include_ids(concept_ids : np.ndarray, exclude_ids : np.ndarray):
+      # Check that exclude_ids are a subset of concept_ids
+      if not np.all(np.isin(exclude_ids, concept_ids)):
+          raise ValueError("Exclude ids must be a subset of concept ids")
+      
+      # Return the indices of the subset of concept_ids that are not in exclude_ids
+      return np.argwhere(np.isin(concept_ids, exclude_ids, invert=True)).flatten()
+  
 class Initializer:
 
   VARIANCE_FACTOR = 1.0

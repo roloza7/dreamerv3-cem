@@ -60,7 +60,7 @@ class Agent(nj.Module):
     self.con = nets.MLP((), **config.conhead, name='con')
 
     # Concept Embedding
-    self.cem = nets.EmbeddingGenerator(**config.cem, name='cem')
+    self.cem = nets.ConceptEmbedding(**config.cem, name='cem')
 
     # Actor
     kwargs = {}
@@ -249,7 +249,7 @@ class Agent(nj.Module):
     newlat, outs = self.dyn.observe(prevlat, prevacts, embed, data['is_first'])
 
     # --- Begin CEM for repr. heads
-    cpt_outs, scores, (residuals, context) = self.cem(outs, training=True, full_scores=self.config.cem.cpt.adversarial)
+    cpt_outs, scores, (residuals, context) = self.cem(outs, training=True, full_scores=self.config.cem.concepts.adversarial)
 
     # --- End CEM
 
@@ -358,45 +358,60 @@ class Agent(nj.Module):
 
     # DONE: Concept Loss
     concepts = data['concepts']
-    if self.config.cem.cpt.adversarial:
+    if self.config.cem.concepts.adversarial:
       head_scores, emb_scores = scores
-      # We want to optimize head stores to be good
+      # We want to optimize head scores to be good
       # and emb scores to be good diagonally and bad off-diagonally
 
       # Broadcasting accross the head dimension, that way each head tries to predict everything
       concepts = concepts[..., None, :]
       head_concept_loss = ((head_scores - concepts) ** 2)
 
-      # Seleects the diagonal scores
+      # TODO: This doesn't belong here
+      concept_presence = concepts.mean(axis=(0, 1))
+
+      # Gather head per-concept loss metrics (C, C)
+      per_concept_loss_head = head_concept_loss.mean(axis=(0, 1))
+
+      # Selects the diagonal scores
       mask = jnp.eye(concepts.shape[-1], dtype=emb_scores.dtype)[None, None, ...] # (1, 1, C, C)
 
+      # Inverts off-diagonal scores
       phi_tgt = concepts * mask + (1 - concepts) * (1 - mask)
 
       emb_concept_loss = ((emb_scores - phi_tgt) ** 2)
 
+      # Gather emb per-concept loss metrics (C, C)
+      per_concept_loss_phi = emb_concept_loss.mean(axis=(0, 1))
+
       # Average them for equivalence
-      losses['concept'] = (head_concept_loss + emb_concept_loss) / 2
+      losses['concept_head'] = head_concept_loss
+      losses['concept_phi'] = emb_concept_loss
     else:
       concept_loss = ((scores - concepts) ** 2)
       losses['concept'] = concept_loss
 
-    # TODO: Orthogonality Loss
-    ctx_norm = context / jnp.linalg.norm(context, axis=-1, keepdims=True)
-    res_norm = residuals / jnp.linalg.norm(residuals, axis=-1, keepdims=True)
-    
-    if self.config.orthogonality_loss == "res":
+    # Orthogonality Loss    
+    if self.config.cem.orthogonality_loss == "res":
+      ctx_norm = context / jnp.linalg.norm(context, axis=-1, keepdims=True)
+      res_norm = residuals / jnp.linalg.norm(residuals, axis=-1, keepdims=True)
       ortho_loss = (ctx_norm * res_norm[..., None, :]).mean()
-    elif self.config.orthogonality_loss == "full":
+      losses['ortho'] = ortho_loss
+    elif self.config.cem.orthogonality_loss == "full":
+      ctx_norm = context / jnp.linalg.norm(context, axis=-1, keepdims=True)
+      res_norm = residuals / jnp.linalg.norm(residuals, axis=-1, keepdims=True)
       all_vectors_norm = jnp.concatenate([ctx_norm, res_norm[..., None, :]], axis=-2)
       ortho_loss = jnp.sum(all_vectors_norm[..., None, :, :] * all_vectors_norm[..., None, :], axis=-1)
       loss_w = ortho_loss.shape[-1]
       ortho_mask = 1 - jnp.eye(loss_w, dtype=ortho_loss.dtype)
       ortho_loss = (ortho_loss * ortho_mask).sum() / (loss_w * (loss_w - 1))
-    elif self.config.orthogonality_loss == "none":
+      losses['ortho'] = ortho_loss
+    elif self.config.cem.orthogonality_loss == "none":
       ortho_loss = 0
+    elif self.config.cem.orthogonality_loss == "concepts_only":
+      raise NotImplementedError("This is not implemented yet")
     else:
       raise NotImplementedError(self.config.orthogonality_loss)
-    losses['ortho'] = ortho_loss
 
     if self.config.replay_critic_loss:
       replay_outs_cem, _, _ = self.cem(replay_outs, bdims=2)
@@ -423,6 +438,9 @@ class Agent(nj.Module):
               sg(replay_slowcritic.mean())))[:, :-1]
 
     # Metrics
+    metrics.update(jaxutils.tensorstats(concept_presence, 'concept_presence'))
+    metrics.update(jaxutils.tensorstats(per_concept_loss_head, 'per_concept_loss_head'))
+    metrics.update(jaxutils.tensorstats(per_concept_loss_phi, 'per_concept_loss_phi'))
     metrics.update({f'{k}_loss': v.mean() for k, v in losses.items()})
     metrics.update({f'{k}_loss_std': v.std() for k, v in losses.items()})
     metrics.update(jaxutils.tensorstats(adv, 'adv'))

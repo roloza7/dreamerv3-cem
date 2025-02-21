@@ -11,3 +11,4 @@ wandb/
 data/
 *.out
 ;
+debug/config.yaml
