@@ -438,9 +438,9 @@ class Agent(nj.Module):
               sg(replay_slowcritic.mean())))[:, :-1]
 
     # Metrics
-    metrics.update(jaxutils.tensorstats(concept_presence, 'concept_presence'))
-    metrics.update(jaxutils.tensorstats(per_concept_loss_head, 'per_concept_loss_head'))
-    metrics.update(jaxutils.tensorstats(per_concept_loss_phi, 'per_concept_loss_phi'))
+    metrics['concept_presence'] = concept_presence
+    metrics['per_concept_loss_head'] = per_concept_loss_head
+    metrics['per_concept_loss_phi'] = per_concept_loss_phi
     metrics.update({f'{k}_loss': v.mean() for k, v in losses.items()})
     metrics.update({f'{k}_loss_std': v.std() for k, v in losses.items()})
     metrics.update(jaxutils.tensorstats(adv, 'adv'))
